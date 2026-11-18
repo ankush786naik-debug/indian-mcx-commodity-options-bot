@@ -1,0 +1,86 @@
+{
+  "commodities": [
+    {
+      "name": "Gold",
+      "aliases": [
+        "GOLD"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "Gold Mini",
+      "aliases": [
+        "GOLDM",
+        "GOLD MINI"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "Silver",
+      "aliases": [
+        "SILVER"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "Silver Mini",
+      "aliases": [
+        "SILVERM",
+        "SILVER MINI"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "Crude Oil",
+      "aliases": [
+        "CRUDEOIL",
+        "CRUDE OIL"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "Natural Gas",
+      "aliases": [
+        "NATURALGAS",
+        "NATURAL GAS"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "Copper",
+      "aliases": [
+        "COPPER"
+      ],
+      "enabled": true
+    }
+  ],
+  "timeframes": {
+    "entry_minutes": 5,
+    "confirmation_minutes": 15,
+    "trend": "day"
+  },
+  "strategy": {
+    "min_score": 70,
+    "ema_fast": 20,
+    "ema_slow": 50,
+    "ema_trend": 200,
+    "rsi_period": 14,
+    "atr_period": 14,
+    "volume_lookback": 20,
+    "support_resistance_lookback": 20,
+    "min_relative_volume": 1.2
+  },
+  "risk": {
+    "max_risk_per_trade_pct": 0.5,
+    "max_daily_loss_pct": 1.5,
+    "max_open_paper_trades": 3
+  },
+  "news": {
+    "enabled": true,
+    "block_on_unknown": true,
+    "max_age_hours": 24,
+    "pre_event_block_minutes": 30,
+    "post_event_block_minutes": 30,
+    "rss_urls": []
+  }
+}
