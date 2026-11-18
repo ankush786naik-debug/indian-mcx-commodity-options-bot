@@ -1,34 +1,35 @@
+
 from instruments import InstrumentMaster
 
 
 SAMPLE_INSTRUMENTS = [
     {
         "segment": "MCX_FO",
-        "trading_symbol": "GOLDM26NOVFUT",
-        "name": "GOLDM",
-        "instrument_type": "FUTCOM",
-        "instrument_key": "MCX_FO|GOLDM26NOVFUT",
+        "trading_symbol": "GOLD FUT",
+        "name": "GOLD",
+        "instrument_type": "FUT",
+        "instrument_key": "MCX_FO|GOLD_FUT",
     },
     {
         "segment": "MCX_FO",
-        "trading_symbol": "GOLDM26NOVCE",
-        "name": "GOLDM",
-        "instrument_type": "OPTFUT",
-        "instrument_key": "MCX_FO|GOLDM26NOVCE",
+        "trading_symbol": "GOLD 70000 CE",
+        "name": "GOLD",
+        "instrument_type": "CE",
+        "instrument_key": "MCX_FO|GOLD_CE",
     },
     {
         "segment": "MCX_FO",
-        "trading_symbol": "GOLDM26NOVPE",
-        "name": "GOLDM",
-        "instrument_type": "OPTFUT",
-        "instrument_key": "MCX_FO|GOLDM26NOVPE",
+        "trading_symbol": "GOLD 70000 PE",
+        "name": "GOLD",
+        "instrument_type": "PE",
+        "instrument_key": "MCX_FO|GOLD_PE",
     },
     {
         "segment": "NSE_FO",
-        "trading_symbol": "NIFTY26NOVCE",
+        "trading_symbol": "NIFTY CE",
         "name": "NIFTY",
-        "instrument_type": "OPTIDX",
-        "instrument_key": "NSE_FO|NIFTY26NOVCE",
+        "instrument_type": "CE",
+        "instrument_key": "NSE_FO|NIFTY_CE",
     },
 ]
 
@@ -40,48 +41,58 @@ def test_mcx_filter():
     results = master.get_mcx_instruments()
 
     assert len(results) == 3
-    assert all(
-        item["segment"].startswith("MCX")
-        for item in results
-    )
+    assert all(x["segment"] == "MCX_FO" for x in results)
 
 
-def test_commodity_search():
+def test_gold_search():
     master = InstrumentMaster()
     master.instruments = SAMPLE_INSTRUMENTS
 
-    results = master.search_commodity("GOLDM")
+    results = master.search_commodity("GOLD")
 
     assert len(results) == 3
+
+
+def test_goldm_does_not_match_gold():
+    master = InstrumentMaster()
+    master.instruments = [
+        {
+            "segment": "MCX_FO",
+            "name": "GOLDM",
+            "trading_symbol": "GOLDM FUT",
+            "instrument_type": "FUT",
+        }
+    ]
+
+    assert master.search_commodity("GOLD") == []
 
 
 def test_option_contract_filter():
     master = InstrumentMaster()
     master.instruments = SAMPLE_INSTRUMENTS
 
-    results = master.get_option_contracts("GOLDM")
+    results = master.get_option_contracts("GOLD")
 
     assert len(results) == 2
-    assert all(
-        "OPT" in item["instrument_type"]
-        for item in results
-    )
+    assert {x["instrument_type"] for x in results} == {"CE", "PE"}
 
 
-def test_empty_commodity_rejected():
+def test_futures_filter():
     master = InstrumentMaster()
     master.instruments = SAMPLE_INSTRUMENTS
+
+    results = master.get_mcx_futures("GOLD")
+
+    assert len(results) == 1
+    assert results[0]["instrument_type"] == "FUT"
+
+
+def test_invalid_commodity():
+    master = InstrumentMaster()
 
     try:
-        master.search_commodity("")
-        assert False, "Expected ValueError"
+        master.search_commodity("UNKNOWN")
+        assert False
     except ValueError:
         pass
-
-
-def test_no_matching_commodity():
-    master = InstrumentMaster()
-    master.instruments = SAMPLE_INSTRUMENTS
-
-    assert master.search_commodity("COPPER") == []
-  
+        
