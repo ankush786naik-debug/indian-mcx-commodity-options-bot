@@ -6,13 +6,8 @@ app:
   log_level: INFO
 
 commodities:
-  - GOLD
-  - GOLDM
-  - SILVER
-  - SILVERM
   - CRUDEOIL
   - NATURALGAS
-  - COPPER
 
 timeframes:
   daily: 1day
