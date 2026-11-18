@@ -1,3 +1,4 @@
+
 import json
 import logging
 from datetime import date, datetime
@@ -10,13 +11,8 @@ from market_data import MarketData
 IST = ZoneInfo("Asia/Kolkata")
 
 COMMODITIES = [
-    "GOLD",
-    "GOLDM",
-    "SILVER",
-    "SILVERM",
-    "CRUDEOIL",
-    "NATURALGAS",
-    "COPPER",
+    "GOLD", "GOLDM", "SILVER", "SILVERM",
+    "CRUDEOIL", "NATURALGAS", "COPPER",
 ]
 
 
@@ -25,8 +21,7 @@ def get_expiry(item):
 
     if isinstance(value, (int, float)):
         return datetime.fromtimestamp(
-            value / 1000,
-            tz=IST,
+            value / 1000, tz=IST
         ).date()
 
     if isinstance(value, str):
@@ -50,12 +45,52 @@ def nearest_contracts(contracts):
     if not valid:
         return [], None
 
-    nearest = min(get_expiry(item) for item in valid)
+    expiry = min(get_expiry(item) for item in valid)
 
     return [
         item for item in valid
-        if get_expiry(item) == nearest
-    ], nearest
+        if get_expiry(item) == expiry
+    ], expiry
+
+
+def find_quote(quote_data, instrument):
+    """
+    Match Upstox response using instrument_token or
+    exchange:trading_symbol response key.
+    """
+
+    instrument_key = instrument.get("instrument_key")
+    segment = instrument.get("segment")
+    symbol = instrument.get("trading_symbol")
+
+    expected_keys = []
+
+    if segment and symbol:
+        expected_keys.append(f"{segment}:{symbol}")
+
+    if instrument_key:
+        expected_keys.append(instrument_key.replace("|", ":"))
+
+    for key in expected_keys:
+        if key in quote_data:
+            return quote_data[key]
+
+    for quote in quote_data.values():
+        if (
+            isinstance(quote, dict)
+            and quote.get("instrument_token") == instrument_key
+        ):
+            return quote
+
+    return None
+
+
+def valid_quote(quote):
+    return (
+        isinstance(quote, dict)
+        and isinstance(quote.get("last_price"), (int, float))
+        and quote.get("last_price", 0) > 0
+    )
 
 
 def run_diagnostics():
@@ -68,128 +103,123 @@ def run_diagnostics():
         "checked_at": datetime.now(IST).isoformat(),
         "exchange": "MCX",
         "commodities": {},
+        "quote_response_keys": [],
     }
 
     try:
         master.download()
 
         futures_to_check = {}
+        options_to_check = {}
 
         for commodity in COMMODITIES:
             futures = master.get_mcx_futures(commodity)
             options = master.get_option_contracts(commodity)
 
-            selected_futures, future_expiry = nearest_contracts(
-                futures
-            )
-
-            selected_options, option_expiry = nearest_contracts(
-                options
-            )
-
-            if selected_futures:
-                futures_to_check[commodity] = (
-                    selected_futures[0]
-                )
+            selected_futures, future_expiry = nearest_contracts(futures)
+            selected_options, option_expiry = nearest_contracts(options)
 
             report["commodities"][commodity] = {
                 "futures_found": len(futures),
                 "options_found": len(options),
                 "nearest_future_expiry": (
-                    future_expiry.isoformat()
-                    if future_expiry else None
+                    future_expiry.isoformat() if future_expiry else None
                 ),
                 "nearest_option_expiry": (
-                    option_expiry.isoformat()
-                    if option_expiry else None
+                    option_expiry.isoformat() if option_expiry else None
                 ),
                 "future_quote_available": False,
                 "call_quote_available": False,
                 "put_quote_available": False,
+                "future_price": None,
             }
 
-        if not futures_to_check:
-            raise RuntimeError(
-                "No valid MCX futures contracts found."
-            )
+            if selected_futures:
+                futures_to_check[commodity] = selected_futures[0]
+
+            if selected_options:
+                options_to_check[commodity] = selected_options
 
         future_keys = [
             item["instrument_key"]
             for item in futures_to_check.values()
+            if item.get("instrument_key")
         ]
 
-        future_quotes = market.get_market_quote(future_keys)
+        future_data = {}
 
-        option_keys = []
-        option_map = {}
+        if future_keys:
+            future_data = market.get_market_quote(future_keys)
 
-        for commodity, future in futures_to_check.items():
-            quote = future_quotes.get(future["instrument_key"])
+        report["quote_response_keys"] = list(future_data.keys())[:20]
 
-            if not isinstance(quote, dict):
-                continue
+        for commodity, instrument in futures_to_check.items():
+            quote = find_quote(future_data, instrument)
 
-            price = quote.get("last_price")
+            if valid_quote(quote):
+                report["commodities"][commodity][
+                    "future_quote_available"
+                ] = True
 
-            if not isinstance(price, (int, float)) or price <= 0:
-                continue
+                report["commodities"][commodity][
+                    "future_price"
+                ] = quote["last_price"]
 
-            report["commodities"][commodity][
-                "future_quote_available"
-            ] = True
+        option_instruments = []
 
-            options = master.get_option_contracts(commodity)
-            selected_options, _ = nearest_contracts(options)
+        for commodity, contracts in options_to_check.items():
+            underlying_price = report["commodities"][commodity][
+                "future_price"
+            ]
 
-            if not selected_options:
+            if not underlying_price:
                 continue
 
             for option_type in ("CE", "PE"):
                 candidates = [
-                    item for item in selected_options
+                    item for item in contracts
                     if item.get("instrument_type") == option_type
                 ]
 
                 if not candidates:
                     continue
 
-                candidate = min(
+                selected = min(
                     candidates,
                     key=lambda item: abs(
-                        float(item.get("strike_price", 0)) - price
+                        float(item.get("strike_price", 0))
+                        - underlying_price
                     ),
                 )
 
-                key = candidate.get("instrument_key")
+                option_instruments.append(
+                    (commodity, option_type, selected)
+                )
 
-                if key:
-                    option_keys.append(key)
-                    option_map[key] = (commodity, option_type)
+        option_keys = [
+            item[2]["instrument_key"]
+            for item in option_instruments
+            if item[2].get("instrument_key")
+        ]
+
+        option_data = {}
 
         if option_keys:
-            option_quotes = market.get_market_quote(
-                option_keys[:500]
+            for start in range(0, len(option_keys), 500):
+                batch = option_keys[start:start + 500]
+                batch_data = market.get_market_quote(batch)
+                option_data.update(batch_data)
+
+        for commodity, option_type, instrument in option_instruments:
+            quote = find_quote(option_data, instrument)
+
+            field = (
+                "call_quote_available"
+                if option_type == "CE"
+                else "put_quote_available"
             )
 
-            for key, (commodity, option_type) in option_map.items():
-                quote = option_quotes.get(key)
-
-                available = (
-                    isinstance(quote, dict)
-                    and isinstance(
-                        quote.get("last_price"),
-                        (int, float),
-                    )
-                    and quote.get("last_price", 0) > 0
-                )
-
-                field = (
-                    "call_quote_available"
-                    if option_type == "CE"
-                    else "put_quote_available"
-                )
-
-                report["commodities"][commodity][field] = available
+            report["commodities"][commodity][field] = valid_quote(quote)
 
         return report
 
@@ -207,4 +237,4 @@ if __name__ == "__main__":
             "error": str(exc),
         }, indent=2))
         raise
-              
+    
