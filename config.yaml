@@ -1,0 +1,60 @@
+
+app:
+  name: indian-mcx-commodity-options-bot
+  timezone: Asia/Kolkata
+  mode: paper
+  log_level: INFO
+
+commodities:
+  - GOLD
+  - GOLDM
+  - SILVER
+  - SILVERM
+  - CRUDEOIL
+  - NATURALGAS
+  - COPPER
+
+timeframes:
+  daily: 1day
+  confirmation: 15min
+  entry: 5min
+  source_interval: 1minute
+
+strategy:
+  minimum_score: 70
+  ema_fast: 20
+  ema_slow: 50
+  ema_trend: 200
+  rsi_period: 14
+  atr_period: 14
+  relative_volume_period: 20
+  risk_per_trade_percent: 1.0
+  max_open_positions: 3
+
+options:
+  minimum_open_interest: 1
+  minimum_volume: 1
+  maximum_bid_ask_spread_percent: 3.0
+  prefer_atm_or_near_atm: true
+
+news_filter:
+  enabled: true
+  mode: filter_only
+  block_if_unavailable: true
+  event_buffer_minutes_before: 30
+  event_buffer_minutes_after: 30
+
+signals:
+  types:
+    - BUY_CALL
+    - BUY_PUT
+    - NO_TRADE
+  paper_trading_only: true
+  live_orders_enabled: false
+
+telegram:
+  enabled: false
+
+reports:
+  save_signal_history: true
+  save_daily_summary: true
