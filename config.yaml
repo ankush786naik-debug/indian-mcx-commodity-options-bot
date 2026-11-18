@@ -53,7 +53,7 @@ signals:
   live_orders_enabled: false
 
 telegram:
-  enabled: false
+  enabled: true
 
 reports:
   save_signal_history: true
