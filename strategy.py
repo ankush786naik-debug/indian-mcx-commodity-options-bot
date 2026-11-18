@@ -1,13 +1,20 @@
+
 import pandas as pd
 
 from indicators import add_indicators
 from support_resistance import find_support_resistance
 
 
-def _latest_values(df):
-    if len(df) < 200:
+def _latest_values(df, minimum_candles=200, daily_fallback=False):
+    if daily_fallback:
+        if len(df) < 50:
+            raise ValueError(
+                "At least 50 daily candles are required for trend analysis."
+            )
+    elif len(df) < minimum_candles:
         raise ValueError(
-            "At least 200 candles are required for EMA 200 analysis."
+            f"At least {minimum_candles} candles are required "
+            "for EMA 200 analysis."
         )
 
     result = add_indicators(df)
@@ -17,7 +24,6 @@ def _latest_values(df):
         "close",
         "ema_20",
         "ema_50",
-        "ema_200",
         "rsi_14",
         "macd",
         "macd_signal",
@@ -28,6 +34,12 @@ def _latest_values(df):
         if pd.isna(latest[column]):
             raise ValueError(
                 f"Insufficient data for indicator: {column}"
+            )
+
+    if not daily_fallback or len(df) >= 200:
+        if pd.isna(latest["ema_200"]):
+            raise ValueError(
+                "Insufficient data for EMA 200 analysis."
             )
 
     return result, latest
@@ -45,21 +57,31 @@ def analyze_market(daily_df, fifteen_min_df, five_min_df, minimum_score=70):
     if not 0 <= minimum_score <= 100:
         raise ValueError("minimum_score must be between 0 and 100.")
 
-    daily, d = _latest_values(daily_df)
+    daily, d = _latest_values(
+        daily_df,
+        daily_fallback=True
+    )
     fifteen, m15 = _latest_values(fifteen_min_df)
     five, m5 = _latest_values(five_min_df)
+
+    daily_ema_basis = (
+        "EMA 200" if len(daily_df) >= 200 else "EMA 50 fallback"
+    )
+    daily_trend_ema = (
+        d["ema_200"] if len(daily_df) >= 200 else d["ema_50"]
+    )
 
     score_call = 0
     score_put = 0
     reasons = []
 
     # Daily trend: maximum 30 points.
-    if d["close"] > d["ema_200"]:
+    if d["close"] > daily_trend_ema:
         score_call += 15
-        reasons.append("Daily price above EMA 200")
-    elif d["close"] < d["ema_200"]:
+        reasons.append(f"Daily price above {daily_ema_basis}")
+    elif d["close"] < daily_trend_ema:
         score_put += 15
-        reasons.append("Daily price below EMA 200")
+        reasons.append(f"Daily price below {daily_ema_basis}")
 
     if d["ema_20"] > d["ema_50"]:
         score_call += 15
@@ -68,7 +90,7 @@ def analyze_market(daily_df, fifteen_min_df, five_min_df, minimum_score=70):
         score_put += 15
         reasons.append("Daily EMA 20 below EMA 50")
 
-    # 15-minute confirmation: maximum 30 points.
+    # 15-minute confirmation.
     if m15["close"] > m15["ema_20"] > m15["ema_50"]:
         score_call += 15
         reasons.append("15-minute bullish EMA alignment")
@@ -88,7 +110,7 @@ def analyze_market(daily_df, fifteen_min_df, five_min_df, minimum_score=70):
     elif 30 <= m15["rsi_14"] <= 50:
         score_put += 5
 
-    # 5-minute entry confirmation: maximum 40 points.
+    # 5-minute entry confirmation.
     if m5["close"] > m5["ema_20"]:
         score_call += 10
         reasons.append("5-minute price above EMA 20")
@@ -108,7 +130,6 @@ def analyze_market(daily_df, fifteen_min_df, five_min_df, minimum_score=70):
     elif 30 <= m5["rsi_14"] <= 50:
         score_put += 10
 
-    # Avoid chasing an already extended move.
     if m5["rsi_14"] > 75:
         score_call -= 10
         reasons.append("Bullish momentum may be overextended")
@@ -119,7 +140,6 @@ def analyze_market(daily_df, fifteen_min_df, five_min_df, minimum_score=70):
 
     levels = find_support_resistance(fifteen)
 
-    # Final directional decision.
     if score_call >= minimum_score and score_call > score_put:
         signal = "BUY_CALL"
         score = score_call
@@ -137,13 +157,14 @@ def analyze_market(daily_df, fifteen_min_df, five_min_df, minimum_score=70):
         "put_score": max(0, min(100, score_put)),
         "underlying_price": float(m5["close"]),
         "daily_trend": (
-            "BULLISH" if d["close"] > d["ema_200"]
+            "BULLISH" if d["close"] > daily_trend_ema
             else "BEARISH"
         ),
+        "daily_trend_basis": daily_ema_basis,
         "support": levels["support"],
         "resistance": levels["resistance"],
         "atr": float(m5["atr_14"]),
         "reasons": reasons,
         "status": "DIRECTIONAL_CANDIDATE_ONLY",
     }
-  
+    
