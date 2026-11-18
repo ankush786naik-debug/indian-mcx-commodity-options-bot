@@ -1,8 +1,8 @@
-import csv
+
 import gzip
-import io
+import json
 import logging
-from datetime import date
+import re
 
 import requests
 
@@ -12,9 +12,19 @@ logger = logging.getLogger(__name__)
 
 class InstrumentMaster:
     INSTRUMENT_URL = (
-        "https://assets.upstox.com/market-quote/instruments/"
-        "exch_complete.json.gz"
+        "https://assets.upstox.com/market-quote/"
+        "instruments/exchange/MCX.json.gz"
     )
+
+    COMMODITIES = {
+        "GOLD": ["GOLD"],
+        "GOLDM": ["GOLDM"],
+        "SILVER": ["SILVER"],
+        "SILVERM": ["SILVERM"],
+        "CRUDEOIL": ["CRUDEOIL"],
+        "NATURALGAS": ["NATURALGAS"],
+        "COPPER": ["COPPER"],
+    }
 
     def __init__(self, timeout=60):
         self.timeout = timeout
@@ -33,64 +43,69 @@ class InstrumentMaster:
             content = gzip.decompress(content)
 
         try:
-            import json
             records = json.loads(content.decode("utf-8"))
         except (UnicodeDecodeError, ValueError) as exc:
             raise RuntimeError(
-                "Unable to parse Upstox instrument master."
+                "Unable to parse MCX instrument master."
             ) from exc
 
         if not isinstance(records, list):
-            raise RuntimeError(
-                "Unexpected instrument master format."
-            )
+            raise RuntimeError("Unexpected instrument master format.")
 
-        self.instruments = records
-        logger.info("Downloaded %s instrument records.", len(records))
-        return records
+        self.instruments = [
+            item for item in records
+            if isinstance(item, dict)
+            and item.get("segment") == "MCX_FO"
+        ]
+
+        logger.info(
+            "Loaded %s MCX instruments.",
+            len(self.instruments),
+        )
+
+        return self.instruments
 
     def get_mcx_instruments(self):
         if not self.instruments:
             self.download()
 
-        return [
-            item for item in self.instruments
-            if str(item.get("segment", "")).upper().startswith("MCX")
-        ]
+        return self.instruments
 
     def search_commodity(self, commodity):
-        """
-        Search MCX instruments by trading symbol or name.
-        This returns candidates, not a guarantee that an option
-        contract is currently tradable.
-        """
-
         commodity = commodity.upper().strip()
 
-        if not commodity:
-            raise ValueError("Commodity name is required.")
+        if commodity not in self.COMMODITIES:
+            raise ValueError(f"Unsupported commodity: {commodity}")
 
-        matches = []
+        patterns = [
+            re.compile(r"\b" + re.escape(alias) + r"\b")
+            for alias in self.COMMODITIES[commodity]
+        ]
+
+        results = []
 
         for item in self.get_mcx_instruments():
-            symbol = str(item.get("trading_symbol", "")).upper()
-            name = str(item.get("name", "")).upper()
+            searchable = " ".join([
+                str(item.get("name", "")),
+                str(item.get("underlying_symbol", "")),
+                str(item.get("trading_symbol", "")),
+                str(item.get("short_name", "")),
+            ]).upper()
 
-            if commodity in symbol or commodity in name:
-                matches.append(item)
+            if any(pattern.search(searchable) for pattern in patterns):
+                results.append(item)
 
-        return matches
+        return results
+
+    def get_mcx_futures(self, commodity):
+        return [
+            item for item in self.search_commodity(commodity)
+            if item.get("instrument_type") == "FUT"
+        ]
 
     def get_option_contracts(self, commodity):
-        """
-        Return option candidates for further validation.
-        """
-
-        matches = self.search_commodity(commodity)
-
         return [
-            item for item in matches
-            if "OPT" in str(item.get("instrument_type", "")).upper()
-            or "OPTION" in str(item.get("instrument_type", "")).upper()
+            item for item in self.search_commodity(commodity)
+            if item.get("instrument_type") in ("CE", "PE")
         ]
-      
+        
