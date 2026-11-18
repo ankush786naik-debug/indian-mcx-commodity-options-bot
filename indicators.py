@@ -1,3 +1,4 @@
+
 import numpy as np
 import pandas as pd
 
@@ -9,7 +10,6 @@ def validate_ohlcv(df):
         raise TypeError("Input must be a pandas DataFrame.")
 
     missing = [col for col in required if col not in df.columns]
-
     if missing:
         raise ValueError(f"Missing columns: {missing}")
 
@@ -47,7 +47,6 @@ def calculate_ema(series, period):
 
 def calculate_rsi(close, period=14):
     delta = close.diff()
-
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
 
@@ -91,6 +90,84 @@ def calculate_atr(df, period=14):
     ).mean()
 
 
+def calculate_adx(df, period=14):
+    """
+    Calculate ADX, positive directional indicator and
+    negative directional indicator using Wilder smoothing.
+    """
+
+    high = df["high"].astype(float)
+    low = df["low"].astype(float)
+    close = df["close"].astype(float)
+
+    up_move = high.diff()
+    down_move = -low.diff()
+
+    plus_dm = pd.Series(
+        np.where(
+            (up_move > down_move) & (up_move > 0),
+            up_move,
+            0.0
+        ),
+        index=df.index
+    )
+
+    minus_dm = pd.Series(
+        np.where(
+            (down_move > up_move) & (down_move > 0),
+            down_move,
+            0.0
+        ),
+        index=df.index
+    )
+
+    previous_close = close.shift(1)
+
+    true_range = pd.concat(
+        [
+            high - low,
+            (high - previous_close).abs(),
+            (low - previous_close).abs(),
+        ],
+        axis=1
+    ).max(axis=1)
+
+    atr = true_range.ewm(
+        alpha=1 / period,
+        adjust=False,
+        min_periods=period
+    ).mean()
+
+    smooth_plus = plus_dm.ewm(
+        alpha=1 / period,
+        adjust=False,
+        min_periods=period
+    ).mean()
+
+    smooth_minus = minus_dm.ewm(
+        alpha=1 / period,
+        adjust=False,
+        min_periods=period
+    ).mean()
+
+    plus_di = 100 * smooth_plus / atr.replace(0, np.nan)
+    minus_di = 100 * smooth_minus / atr.replace(0, np.nan)
+
+    denominator = (plus_di + minus_di).replace(0, np.nan)
+
+    dx = (
+        100 * (plus_di - minus_di).abs() / denominator
+    )
+
+    adx = dx.ewm(
+        alpha=1 / period,
+        adjust=False,
+        min_periods=period
+    ).mean()
+
+    return adx, plus_di, minus_di
+
+
 def calculate_vwap(df):
     typical_price = (
         df["high"] + df["low"] + df["close"]
@@ -130,16 +207,20 @@ def add_indicators(df):
     )
 
     result["atr_14"] = calculate_atr(result, 14)
+    result["adx_14"], result["plus_di_14"], result["minus_di_14"] = (
+        calculate_adx(result, 14)
+    )
 
     result["average_volume"] = (
         result["volume"].rolling(20, min_periods=20).mean()
     )
 
     result["relative_volume"] = (
-        result["volume"] / result["average_volume"].replace(0, np.nan)
+        result["volume"] /
+        result["average_volume"].replace(0, np.nan)
     )
 
     result["vwap"] = calculate_vwap(result)
 
     return result
-  
+    
