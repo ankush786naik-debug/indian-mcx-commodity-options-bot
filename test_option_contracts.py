@@ -28,9 +28,12 @@ SAMPLE_CONTRACTS = [
 ]
 
 
-def test_select_call_contract():
-    selector = OptionContracts()
+@pytest.fixture
+def selector():
+    return OptionContracts(client=object())
 
+
+def test_select_call_contract(selector):
     result = selector.select_contract(
         SAMPLE_CONTRACTS,
         "CE",
@@ -41,9 +44,7 @@ def test_select_call_contract():
     assert result["instrument_type"] == "CE"
 
 
-def test_select_put_contract():
-    selector = OptionContracts()
-
+def test_select_put_contract(selector):
     result = selector.select_contract(
         SAMPLE_CONTRACTS,
         "PE",
@@ -54,9 +55,7 @@ def test_select_put_contract():
     assert result["instrument_type"] == "PE"
 
 
-def test_invalid_option_type():
-    selector = OptionContracts()
-
+def test_invalid_option_type(selector):
     with pytest.raises(ValueError):
         selector.select_contract(
             SAMPLE_CONTRACTS,
@@ -65,9 +64,7 @@ def test_invalid_option_type():
         )
 
 
-def test_invalid_underlying_price():
-    selector = OptionContracts()
-
+def test_invalid_underlying_price(selector):
     with pytest.raises(ValueError):
         selector.select_contract(
             SAMPLE_CONTRACTS,
@@ -76,9 +73,7 @@ def test_invalid_underlying_price():
         )
 
 
-def test_no_matching_contract():
-    selector = OptionContracts()
-
+def test_no_matching_contract(selector):
     result = selector.select_contract(
         SAMPLE_CONTRACTS,
         "PE",
@@ -87,4 +82,4 @@ def test_no_matching_contract():
     )
 
     assert result is None
-  
+    
