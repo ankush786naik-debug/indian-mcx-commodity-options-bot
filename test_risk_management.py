@@ -20,8 +20,13 @@ def test_position_sizing():
     result = calculate_trade_risk(
         entry_price=250,
         lot_size=100,
-        capital=100000,
+        capital=1000000,
     )
+
+    assert result["lots"] == 2
+    assert result["quantity"] == 200
+    assert result["position_value"] == 50000
+    assert result["maximum_planned_loss"] == 10000
 
     assert result["lots"] == 4
     assert result["quantity"] == 400
