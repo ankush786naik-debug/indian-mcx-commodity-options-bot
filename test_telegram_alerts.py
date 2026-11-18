@@ -2,6 +2,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+import requests
+
 from telegram_alerts import TelegramAlerts
 
 
@@ -86,7 +88,7 @@ def test_successful_message(mock_post):
 
 @patch("telegram_alerts.requests.post")
 def test_failed_message(mock_post):
-    mock_post.side_effect = Exception("Network error")
+    mock_post.side_effect = requests.Timeout("Network error")
 
     telegram = TelegramAlerts(
         bot_token="test-token",
