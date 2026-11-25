@@ -1,6 +1,9 @@
 name: MCX Commodity Signal Scanner
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
   schedule:
     # 09:15 Asia/Kolkata, Monday-Friday (UTC 03:45)
