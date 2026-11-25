@@ -69,7 +69,11 @@ class InstrumentMaster:
         if not self.instruments:
             self.download()
 
-        return self.instruments
+        return [
+            item for item in self.instruments
+            if isinstance(item, dict)
+            and item.get("segment") == "MCX_FO"
+        ]
 
     def search_commodity(self, commodity):
         commodity = commodity.upper().strip()
