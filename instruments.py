@@ -69,7 +69,13 @@ class InstrumentMaster:
         if not self.instruments:
             self.download()
 
-        return self.instruments
+        # Keep the segment filter here as well as in download(): tests,
+        # cached masters and caller-provided records must never leak NSE data.
+        return [
+            item for item in self.instruments
+            if isinstance(item, dict)
+            and item.get("segment") == "MCX_FO"
+        ]
 
     def search_commodity(self, commodity):
         commodity = commodity.upper().strip()
