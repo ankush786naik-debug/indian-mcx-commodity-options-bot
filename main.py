@@ -1,5 +1,7 @@
 
 import logging
+import os
+import re
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -49,31 +51,69 @@ def get_expiry(item):
 
 
 def find_quote(quote_data, instrument):
-    expected_keys = []
+    """Match Upstox quote keys safely, including MCX symbol-style keys."""
+    if not isinstance(quote_data, dict) or not isinstance(instrument, dict):
+        return None
+
+    def normalize(value):
+        return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
 
     segment = instrument.get("segment")
-    symbol = instrument.get("trading_symbol")
     instrument_key = instrument.get("instrument_key")
+    symbol = instrument.get("trading_symbol")
+    expected = set()
 
     if segment and symbol:
-        expected_keys.append(f"{segment}:{symbol}")
-
+        expected.add(f"{segment}:{symbol}")
     if instrument_key:
-        expected_keys.append(instrument_key.replace("|", ":"))
+        expected.add(instrument_key.replace("|", ":"))
 
-    for key in expected_keys:
-        if key in quote_data:
-            return quote_data[key]
+    # Upstox's MCX quote endpoint may key the response by trading symbol,
+    # e.g. MCX_FO:CRUDEOIL26DECFUT, rather than MCX_FO|<numeric token>.
+    base = (
+        instrument.get("underlying_symbol")
+        or instrument.get("name")
+        or instrument.get("short_name")
+    )
+    expiry = get_expiry(instrument)
+    instrument_type = str(instrument.get("instrument_type", "")).upper()
 
-    for quote in quote_data.values():
-        if (
-            isinstance(quote, dict)
-            and quote.get("instrument_token") == instrument_key
-        ):
+    if base and expiry and instrument_type in ("FUT", "CE", "PE"):
+        base = re.sub(r"[^A-Z0-9]", "", str(base).upper())
+        expiry_code = expiry.strftime("%y%b").upper()
+        if instrument_type == "FUT":
+            suffix = "FUT"
+        else:
+            strike = instrument.get("strike_price")
+            try:
+                strike_value = float(strike)
+                strike_text = str(int(strike_value)) if strike_value.is_integer() else str(strike_value)
+                suffix = f"{strike_text}{instrument_type}"
+            except (TypeError, ValueError):
+                suffix = instrument_type
+        if base and suffix:
+            expected.add(f"{segment}:{base}{expiry_code}{suffix}")
+
+    expected_normalized = {normalize(key) for key in expected}
+
+    for key, quote in quote_data.items():
+        if normalize(key) in expected_normalized:
+            return quote
+
+        if not isinstance(quote, dict):
+            continue
+
+        # Some API responses also include the canonical key in the quote body.
+        quote_keys = (
+            quote.get("instrument_key"),
+            quote.get("instrument_token"),
+            quote.get("trading_symbol"),
+            quote.get("symbol"),
+        )
+        if any(normalize(value) in expected_normalized for value in quote_keys if value):
             return quote
 
     return None
-
 
 def candles_to_dataframe(candles):
     if not candles:
@@ -207,7 +247,7 @@ def scan_commodity(
 
     if not valid_futures:
         logger.warning("%s: no valid futures contract.", commodity)
-        return
+        return {"commodity": commodity, "status": "NO_DATA", "reason": "No valid unexpired futures contract."}
 
     future = min(valid_futures, key=lambda item: get_expiry(item))
     future_key = future["instrument_key"]
@@ -217,7 +257,7 @@ def scan_commodity(
 
     if not future_quote or float(future_quote.get("last_price", 0)) <= 0:
         logger.warning("%s: live futures quote unavailable.", commodity)
-        return
+        return {"commodity": commodity, "status": "NO_DATA", "reason": "Fresh futures quote unavailable or could not be matched."}
 
     daily, fifteen, five = get_market_data(history, future_key)
 
@@ -236,7 +276,12 @@ def scan_commodity(
     )
 
     if analysis["signal"] == "NO_TRADE":
-        return
+        return {
+            "commodity": commodity,
+            "status": "NO_TRADE",
+            "reason": f"Technical score {analysis['score']}; no qualifying setup.",
+            "score": analysis["score"],
+        }
 
     news = news_filter.fetch_news()
 
@@ -252,7 +297,7 @@ def scan_commodity(
             commodity,
             news_result["reason"],
         )
-        return
+        return {"commodity": commodity, "status": "BLOCKED", "reason": news_result["reason"]}
 
     option_type = (
         "CE" if analysis["signal"] == "BUY_CALL" else "PE"
@@ -268,7 +313,7 @@ def scan_commodity(
 
     if not selected:
         logger.warning("%s: no suitable option contract.", commodity)
-        return
+        return {"commodity": commodity, "status": "NO_DATA", "reason": "No suitable option contract."}
 
     option_quotes = market.get_market_quote(
         [selected["instrument_key"]]
@@ -278,7 +323,7 @@ def scan_commodity(
 
     if not option_quote:
         logger.warning("%s: option quote unavailable.", commodity)
-        return
+        return {"commodity": commodity, "status": "NO_DATA", "reason": "Option quote unavailable or could not be matched."}
 
     option_result = analyze_option_quote(
         selected,
@@ -296,7 +341,7 @@ def scan_commodity(
             commodity,
             ", ".join(option_result["reasons"]),
         )
-        return
+        return {"commodity": commodity, "status": "REJECTED", "reason": ", ".join(option_result["reasons"])}
 
     signal = make_signal(
         commodity,
@@ -310,36 +355,72 @@ def scan_commodity(
 
     if notifier.send(signal):
         logger.info("%s: Telegram signal sent.", commodity)
+        return {"commodity": commodity, "status": "SIGNAL_SENT", "reason": analysis["signal"]}
+    logger.warning("%s: signal delivery failed or was already sent.", commodity)
+    return {"commodity": commodity, "status": "SIGNAL_NOT_SENT", "reason": analysis["signal"]}
+
+
+def format_run_summary(outcomes, started_at):
+    lines = [
+        "MCX SCANNER RUN REPORT",
+        "Mode: PAPER ONLY - NO LIVE ORDER",
+        f"Started: {started_at}",
+    ]
+    run_id = os.getenv("GITHUB_RUN_ID")
+    if run_id:
+        lines.append(f"GitHub Actions run: {run_id}")
+
+    if not outcomes:
+        lines.append("Result: scanner produced no commodity outcomes.")
     else:
-        logger.info("%s: signal not sent or duplicate.", commodity)
+        for item in outcomes:
+            lines.append(
+                f"{item.get('commodity', 'SYSTEM')}: "
+                f"{item.get('status', 'UNKNOWN')} - "
+                f"{item.get('reason', '')}"
+            )
+
+    lines.append("This is a status report, not a trade recommendation.")
+    return "\n".join(lines)
 
 
 def main():
     setup_logging()
     logger = logging.getLogger(__name__)
-
-    config = load_config()
-
-    if config["signals"]["live_orders_enabled"]:
-        raise RuntimeError("Live order execution must remain disabled.")
-
-    master = InstrumentMaster()
-    history = HistoricalData()
-    market = MarketData()
-    options_api = OptionContracts()
-    news_filter = NewsFilter(rss_feeds=NEWS_FEEDS)
+    started_at = datetime.now(IST).isoformat()
+    outcomes = []
+    resources = []
     notifier = SignalNotifier()
+    summary_delivered = False
+    fatal_error = None
 
     try:
+        config = load_config()
+
+        if config["signals"]["live_orders_enabled"]:
+            raise RuntimeError("Live order execution must remain disabled.")
+
+        master = InstrumentMaster()
+        history = HistoricalData()
+        market = MarketData()
+        options_api = OptionContracts()
+        news_filter = NewsFilter(rss_feeds=NEWS_FEEDS)
+        resources = [history, market, options_api]
+
         master.download()
 
         for commodity in config["commodities"]:
             if commodity not in ("CRUDEOIL", "NATURALGAS"):
                 logger.warning("Skipping unsupported commodity: %s", commodity)
+                outcomes.append({
+                    "commodity": commodity,
+                    "status": "SKIPPED",
+                    "reason": "Unsupported commodity.",
+                })
                 continue
 
             try:
-                scan_commodity(
+                outcome = scan_commodity(
                     commodity,
                     config,
                     master,
@@ -349,16 +430,60 @@ def main():
                     news_filter,
                     notifier,
                 )
-            except Exception:
+                outcomes.append(outcome or {
+                    "commodity": commodity,
+                    "status": "NO_RESULT",
+                    "reason": "Scanner returned no outcome.",
+                })
+            except Exception as exc:
                 logger.exception("%s scan failed.", commodity)
+                outcomes.append({
+                    "commodity": commodity,
+                    "status": "ERROR",
+                    "reason": f"{type(exc).__name__}: {str(exc)[:240]}",
+                })
+
+    except Exception as exc:
+        fatal_error = exc
+        logger.exception("MCX scanner run failed.")
+        outcomes.append({
+            "commodity": "SYSTEM",
+            "status": "ERROR",
+            "reason": f"{type(exc).__name__}: {str(exc)[:240]}",
+        })
 
     finally:
-        history.close()
-        market.close()
-        options_api.close()
-        notifier.history.close()
+        for resource in resources:
+            try:
+                resource.close()
+            except Exception:
+                logger.exception("Failed to close scanner resource.")
 
-    logger.info("MCX scan completed. Paper-only mode.")
+        try:
+            summary = format_run_summary(outcomes, started_at)
+            summary_delivered = notifier.send_status(summary)
+            if not summary_delivered:
+                logger.error("Telegram run summary was not delivered.")
+        except Exception:
+            logger.exception("Could not send Telegram run summary.")
+
+        try:
+            notifier.history.close()
+        except Exception:
+            logger.exception("Could not close signal history.")
+
+    if not summary_delivered:
+        raise RuntimeError(
+            "Telegram run summary delivery failed. "
+            "Check GitHub Actions logs and Telegram secrets."
+        )
+
+    if fatal_error or any(item.get("status") == "ERROR" for item in outcomes):
+        raise RuntimeError(
+            "One or more scanner components failed; see run report and logs."
+        )
+
+    logger.info("MCX scan completed. Telegram run report delivered. Paper-only mode.")
 
 
 if __name__ == "__main__":
