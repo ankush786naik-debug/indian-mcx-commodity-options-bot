@@ -45,11 +45,15 @@ class TelegramAlerts:
                 response.raise_for_status()
                 result = response.json()
 
-                if result.get("ok") is True:
+                if isinstance(result, dict) and result.get("ok") is True:
                     logger.info("Telegram message delivered.")
                     return True
 
-                description = result.get("description", "unknown Telegram error")
+                description = (
+                    result.get("description", "unknown Telegram error")
+                    if isinstance(result, dict)
+                    else "unexpected Telegram response format"
+                )
                 logger.warning(
                     "Telegram rejected message (attempt %s/%s): %s",
                     attempt + 1, self.retries, description,
