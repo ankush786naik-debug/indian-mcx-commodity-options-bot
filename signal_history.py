@@ -2,6 +2,9 @@ import hashlib
 import json
 import sqlite3
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo('Asia/Kolkata')
 from pathlib import Path
 
 
@@ -51,7 +54,7 @@ class SignalHistory:
             str(option.get("instrument_key", "")),
             str(option.get("expiry", "")),
             str(option.get("strike", "")),
-            datetime.now().astimezone().date().isoformat(),
+            datetime.now(IST).date().isoformat(),
         ])
 
         return hashlib.sha256(
@@ -71,7 +74,7 @@ class SignalHistory:
 
         created_at = signal.get(
             "timestamp",
-            datetime.now().astimezone().isoformat(),
+            datetime.now(IST).isoformat(),
         )
 
         with self.connect() as connection:
@@ -110,6 +113,16 @@ class SignalHistory:
                 json.dumps(signal, default=str),
             ))
 
+            return cursor.rowcount == 1
+
+    def delete_signal(self, signal):
+        """Remove a dedupe record when Telegram delivery failed."""
+        dedupe_key = self.make_dedupe_key(signal)
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM signals WHERE dedupe_key = ?",
+                (dedupe_key,),
+            )
             return cursor.rowcount == 1
 
     def get_recent_signals(self, limit=50):
