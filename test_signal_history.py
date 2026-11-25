@@ -28,7 +28,10 @@ def sample_signal():
 
 
 def test_save_signal(history):
-    assert history.save_signal(sample_signal()) is True
+    signal = sample_signal()
+    assert history.has_signal(signal) is False
+    assert history.save_signal(signal) is True
+    assert history.has_signal(signal) is True
 
 
 def test_duplicate_signal_rejected(history):
