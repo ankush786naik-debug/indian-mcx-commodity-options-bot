@@ -59,9 +59,11 @@ jobs:
           RUN_NUMBER: ${{ github.run_number }}
         run: |
           python - <<'PY'
+          import json
           import os
           import time
-          import requests
+          import urllib.error
+          import urllib.request
 
           token = os.getenv("TELEGRAM_BOT_TOKEN")
           chat_id = os.getenv("TELEGRAM_CHAT_ID")
@@ -70,38 +72,42 @@ jobs:
               raise SystemExit(1)
 
           message = (
-              "MCX BOT - WORKFLOW ALERT\n"
-              f"Status: {os.getenv('RUN_STATUS', 'FAILED')}\n"
-              f"Run: #{os.getenv('RUN_NUMBER', '')}\n"
-              f"Details: {os.getenv('RUN_URL', '')}\n"
-              "Scanner/tests failed or workflow was cancelled.\n"
+              "MCX BOT - WORKFLOW ALERT\\n"
+              f"Status: {os.getenv('RUN_STATUS', 'FAILED')}\\n"
+              f"Run: #{os.getenv('RUN_NUMBER', '')}\\n"
+              f"Details: {os.getenv('RUN_URL', '')}\\n"
+              "Scanner/tests failed or workflow was cancelled.\\n"
               "PAPER ONLY - NO LIVE ORDER PLACED"
           )
           url = f"https://api.telegram.org/bot{token}/sendMessage"
+          payload = json.dumps({
+              "chat_id": chat_id,
+              "text": message,
+              "disable_web_page_preview": True,
+          }).encode("utf-8")
 
           for attempt in range(3):
               try:
-                  response = requests.post(
+                  request = urllib.request.Request(
                       url,
-                      json={
-                          "chat_id": chat_id,
-                          "text": message,
-                          "disable_web_page_preview": True,
-                      },
-                      timeout=15,
+                      data=payload,
+                      headers={"Content-Type": "application/json"},
+                      method="POST",
                   )
-                  response.raise_for_status()
-                  if response.json().get("ok") is True:
+                  with urllib.request.urlopen(request, timeout=15) as response:
+                      result = json.loads(response.read().decode("utf-8"))
+                  if isinstance(result, dict) and result.get("ok") is True:
                       print("Failure notification delivered to Telegram.")
                       break
                   print("Telegram API did not confirm the failure message.")
-              except (requests.RequestException, ValueError) as exc:
+              except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
                   print(f"Telegram fallback attempt {attempt + 1} failed: {type(exc).__name__}")
 
               if attempt < 2:
                   time.sleep(2 * (attempt + 1))
           else:
               raise SystemExit("Telegram fallback failed after 3 attempts.")
+
           PY
 
       - name: Upload scan log
