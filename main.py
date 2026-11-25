@@ -49,53 +49,75 @@ def get_expiry(item):
 
 
 def find_quote(quote_data, instrument):
-    expected_keys = []
+    """Match Upstox quotes by key or canonical MCX contract symbol."""
+    if not isinstance(quote_data, dict) or not isinstance(instrument, dict):
+        return None
+
+    def normalize(value):
+        return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
 
     segment = instrument.get("segment")
-    symbol = instrument.get("trading_symbol")
     instrument_key = instrument.get("instrument_key")
+    trading_symbol = instrument.get("trading_symbol")
+    expected = set()
 
-    if segment and symbol:
-        expected_keys.append(f"{segment}:{symbol}")
-
+    if segment and trading_symbol:
+        expected.add(f"{segment}:{trading_symbol}")
     if instrument_key:
-        expected_keys.append(instrument_key.replace("|", ":"))
+        expected.add(instrument_key.replace("|", ":"))
 
-    for key in expected_keys:
-        if key in quote_data:
-            return quote_data[key]
+    # MCX quote responses can use a symbol such as
+    # MCX_FO:CRUDEOIL26DECFUT instead of the master numeric instrument key.
+    base = (
+        instrument.get("underlying_symbol")
+        or instrument.get("name")
+        or instrument.get("short_name")
+    )
+    expiry = get_expiry(instrument)
+    kind = str(instrument.get("instrument_type", "")).upper()
 
-    for quote in quote_data.values():
-        if (
-            isinstance(quote, dict)
-            and quote.get("instrument_token") == instrument_key
+    if base and expiry and kind in ("FUT", "CE", "PE"):
+        base = re.sub(r"[^A-Z0-9]", "", str(base).upper())
+        expiry_code = expiry.strftime("%y%b").upper()
+        if kind == "FUT":
+            suffix = "FUT"
+        else:
+            try:
+                strike = float(instrument.get("strike_price"))
+                strike_text = (
+                    str(int(strike))
+                    if strike.is_integer()
+                    else str(strike)
+                )
+                suffix = f"{strike_text}{kind}"
+            except (TypeError, ValueError):
+                suffix = kind
+        if base:
+            expected.add(f"{segment}:{base}{expiry_code}{suffix}")
+
+    expected_normalized = {normalize(key) for key in expected}
+
+    for key, quote in quote_data.items():
+        if normalize(key) in expected_normalized:
+            return quote
+
+        if not isinstance(quote, dict):
+            continue
+
+        body_keys = (
+            quote.get("instrument_key"),
+            quote.get("instrument_token"),
+            quote.get("trading_symbol"),
+            quote.get("symbol"),
+        )
+        if any(
+            normalize(value) in expected_normalized
+            for value in body_keys
+            if value
         ):
             return quote
 
     return None
-
-
-def quote_mismatch_detail(quote_data, instrument):
-    expected = instrument.get("instrument_key", "unknown")
-    symbol = instrument.get("trading_symbol", "unknown")
-    returned = []
-
-    if isinstance(quote_data, dict):
-        for key, quote in list(quote_data.items())[:5]:
-            if isinstance(quote, dict):
-                token = quote.get("instrument_token") or quote.get("instrument_key")
-                quote_symbol = quote.get("symbol") or quote.get("trading_symbol")
-                returned.append(
-                    "%s token=%s symbol=%s" % (key, token, quote_symbol)
-                )
-            else:
-                returned.append(str(key))
-
-    return (
-        "Expected key=%s symbol=%s; returned=%s"
-        % (expected, symbol, "; ".join(returned) if returned else "none")
-    )[:350]
-
 
 def candles_to_dataframe(candles):
     if not candles:
