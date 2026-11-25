@@ -28,9 +28,6 @@ def test_position_sizing():
     assert result["position_value"] == 50000
     assert result["maximum_planned_loss"] == 10000
 
-    assert result["lots"] == 4
-    assert result["quantity"] == 400
-    assert result["position_value"] == 100000
 
 
 def test_risk_budget():
