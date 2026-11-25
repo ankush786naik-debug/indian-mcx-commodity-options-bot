@@ -2,14 +2,21 @@ name: MCX Commodity Signal Scanner
 
 on:
   workflow_dispatch:
+  schedule:
+    # 09:15 Asia/Kolkata, Monday-Friday (UTC 03:45)
+    - cron: "45 3 * * 1-5"
 
 permissions:
   contents: read
 
+concurrency:
+  group: mcx-signal-scan
+  cancel-in-progress: false
+
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -25,9 +32,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          
 
-      - name: Run Crude Oil and Natural Gas scanner
+      - name: Run automated tests
+        run: pytest -q
+
+      - name: Run MCX scanner
+        id: scan
         env:
           UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -36,6 +46,61 @@ jobs:
           set -o pipefail
           python main.py 2>&1 | tee mcx-scan.log
 
+      - name: Telegram failure/cancellation fallback
+        if: ${{ always() && (failure() || cancelled()) }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_STATUS: ${{ job.status }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          python - <<'PY'
+          import os
+          import time
+          import requests
+
+          token = os.getenv("TELEGRAM_BOT_TOKEN")
+          chat_id = os.getenv("TELEGRAM_CHAT_ID")
+          if not token or not chat_id:
+              print("Telegram fallback cannot run: required GitHub secrets are missing.")
+              raise SystemExit(1)
+
+          message = (
+              "MCX BOT - WORKFLOW ALERT\n"
+              f"Status: {os.getenv('RUN_STATUS', 'FAILED')}\n"
+              f"Run: #{os.getenv('RUN_NUMBER', '')}\n"
+              f"Details: {os.getenv('RUN_URL', '')}\n"
+              "Scanner/tests failed or workflow was cancelled.\n"
+              "PAPER ONLY - NO LIVE ORDER PLACED"
+          )
+          url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+          for attempt in range(3):
+              try:
+                  response = requests.post(
+                      url,
+                      json={
+                          "chat_id": chat_id,
+                          "text": message,
+                          "disable_web_page_preview": True,
+                      },
+                      timeout=15,
+                  )
+                  response.raise_for_status()
+                  if response.json().get("ok") is True:
+                      print("Failure notification delivered to Telegram.")
+                      break
+                  print("Telegram API did not confirm the failure message.")
+              except (requests.RequestException, ValueError) as exc:
+                  print(f"Telegram fallback attempt {attempt + 1} failed: {type(exc).__name__}")
+
+              if attempt < 2:
+                  time.sleep(2 * (attempt + 1))
+          else:
+              raise SystemExit("Telegram fallback failed after 3 attempts.")
+          PY
+
       - name: Upload scan log
         if: always()
         uses: actions/upload-artifact@v4
@@ -43,4 +108,3 @@ jobs:
           name: mcx-scan-log
           path: mcx-scan.log
           if-no-files-found: ignore
-          
