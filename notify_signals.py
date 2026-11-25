@@ -38,7 +38,8 @@ class SignalNotifier:
             logger.warning("Option contract is missing.")
             return False
 
-        # Save first to prevent duplicate notifications.
+        # Persist for dedupe, but remove the record if delivery fails so a
+        # later scan can retry rather than silently suppressing the alert.
         saved = self.history.save_signal(signal)
 
         if not saved:
@@ -54,9 +55,17 @@ class SignalNotifier:
                 signal.get("signal"),
             )
         else:
-            logger.error("Telegram delivery failed.")
+            self.history.delete_signal(signal)
+            logger.error("Telegram delivery failed; signal is eligible for retry.")
 
         return success
+
+    def send_status(self, message):
+        """Send scanner status, including NO_TRADE and error outcomes."""
+        if not self.config["telegram"].get("enabled", False):
+            logger.error("Telegram notifications are disabled.")
+            return False
+        return self.telegram.send_status(message)
 
 
 if __name__ == "__main__":
