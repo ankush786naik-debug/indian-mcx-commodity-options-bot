@@ -75,6 +75,28 @@ def find_quote(quote_data, instrument):
     return None
 
 
+def quote_mismatch_detail(quote_data, instrument):
+    expected = instrument.get("instrument_key", "unknown")
+    symbol = instrument.get("trading_symbol", "unknown")
+    returned = []
+
+    if isinstance(quote_data, dict):
+        for key, quote in list(quote_data.items())[:5]:
+            if isinstance(quote, dict):
+                token = quote.get("instrument_token") or quote.get("instrument_key")
+                quote_symbol = quote.get("symbol") or quote.get("trading_symbol")
+                returned.append(
+                    "%s token=%s symbol=%s" % (key, token, quote_symbol)
+                )
+            else:
+                returned.append(str(key))
+
+    return (
+        "Expected key=%s symbol=%s; returned=%s"
+        % (expected, symbol, "; ".join(returned) if returned else "none")
+    )[:350]
+
+
 def candles_to_dataframe(candles):
     if not candles:
         raise ValueError("No historical candles returned.")
@@ -221,7 +243,8 @@ def scan_commodity(
         logger.warning("%s: live futures quote unavailable.", commodity)
         return outcome(
             "NO_LIVE_QUOTE",
-            "Selected futures contract did not return a matching positive quote; no signal generated",
+            quote_mismatch_detail(future_quotes, future)
+            + "; no signal generated",
         )
 
     daily, fifteen, five = get_market_data(history, future_key)
@@ -279,7 +302,10 @@ def scan_commodity(
 
     if not option_quote:
         logger.warning("%s: option quote unavailable.", commodity)
-        return outcome("NO_OPTION_QUOTE", "Selected option quote did not match")
+        return outcome(
+            "NO_OPTION_QUOTE",
+            quote_mismatch_detail(option_quotes, selected),
+        )
 
     option_result = analyze_option_quote(
         selected,
