@@ -1,4 +1,5 @@
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from upstox_client import UpstoxClient
 
@@ -65,7 +66,7 @@ class OptionContracts:
         if underlying_price <= 0:
             raise ValueError("Underlying price must be positive.")
 
-        today = date.today()
+        today = datetime.now(ZoneInfo('Asia/Kolkata')).date()
 
         valid = []
 
