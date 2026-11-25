@@ -3,6 +3,9 @@ import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 
 class SignalHistory:
@@ -45,18 +48,36 @@ class SignalHistory:
     def make_dedupe_key(signal):
         option = signal.get("option", {})
 
+        timestamp = signal.get("timestamp")
+        try:
+            parsed = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=IST)
+            trade_date = parsed.astimezone(IST).date().isoformat()
+        except (TypeError, ValueError):
+            trade_date = datetime.now(IST).date().isoformat()
+
         identity = "|".join([
             str(signal.get("commodity", "")),
             str(signal.get("signal", "")),
             str(option.get("instrument_key", "")),
             str(option.get("expiry", "")),
             str(option.get("strike", "")),
-            datetime.now().astimezone().date().isoformat(),
+            trade_date,
         ])
 
         return hashlib.sha256(
             identity.encode("utf-8")
         ).hexdigest()
+
+    def has_signal(self, signal):
+        dedupe_key = self.make_dedupe_key(signal)
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM signals WHERE dedupe_key = ?",
+                (dedupe_key,),
+            ).fetchone()
+        return row is not None
 
     def save_signal(self, signal):
         if not isinstance(signal, dict):
