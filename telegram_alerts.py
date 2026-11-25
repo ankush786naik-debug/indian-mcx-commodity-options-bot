@@ -1,5 +1,7 @@
 import os
 import logging
+import time
+
 import requests
 
 
@@ -14,39 +16,57 @@ class TelegramAlerts:
         self.chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
         self.timeout = timeout
 
-    def send_message(self, message):
+    def send_message(self, message, attempts=3):
         if not self.bot_token or not self.chat_id:
-            logger.warning("Telegram credentials are not configured.")
+            logger.error("Telegram credentials are not configured.")
             return False
 
         if not isinstance(message, str) or not message.strip():
             raise ValueError("Telegram message cannot be empty.")
 
+        if len(message) > 4096:
+            message = message[:4050] + "\n[message truncated]"
+
         url = f"{self.API_URL}/bot{self.bot_token}/sendMessage"
 
-        try:
-            response = requests.post(
-                url,
-                json={
-                    "chat_id": self.chat_id,
-                    "text": message,
-                    "disable_web_page_preview": True,
-                },
-                timeout=self.timeout,
-            )
+        for attempt in range(1, max(1, attempts) + 1):
+            try:
+                response = requests.post(
+                    url,
+                    json={
+                        "chat_id": self.chat_id,
+                        "text": message,
+                        "disable_web_page_preview": True,
+                    },
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                result = response.json()
 
-            response.raise_for_status()
-            result = response.json()
+                if result.get("ok") is True:
+                    return True
 
-            if result.get("ok") is not True:
-                logger.error("Telegram rejected the message.")
-                return False
+                logger.error(
+                    "Telegram API rejected message (attempt %s/%s): %s",
+                    attempt, attempts, result.get("description", "unknown error"),
+                    )
+            except requests.RequestException as exc:
+                logger.warning(
+                    "Telegram delivery attempt %s/%s failed: %s",
+                    attempt, attempts, type(exc).__name__,
+                )
 
-            return True
+            if attempt < attempts:
+                time.sleep(min(2 ** (attempt - 1), 4))
 
-        except requests.RequestException:
-            logger.exception("Telegram notification failed.")
-            return False
+        logger.error("Telegram delivery failed after retries.")
+        return False
+
+    def format_status(self, message):
+        return str(message)
+
+    def send_status(self, message):
+        return self.send_message(self.format_status(message))
 
     def format_signal(self, signal):
         if signal.get("signal") == "NO_TRADE":
