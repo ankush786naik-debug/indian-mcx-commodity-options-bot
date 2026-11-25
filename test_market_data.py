@@ -1,6 +1,7 @@
 import pytest
 
 from market_data import MarketData
+from main import find_quote
 
 
 class MockUpstoxClient:
@@ -72,3 +73,34 @@ def test_close_client():
 
     assert client.closed is True
   
+
+
+def test_find_quote_matches_canonical_mcx_future_symbol():
+    contract = {
+        "segment": "MCX_FO",
+        "instrument_key": "MCX_FO|576264",
+        "trading_symbol": "CRUDEOIL FUT 18 DEC 26",
+        "underlying_symbol": "CRUDEOIL",
+        "name": "CRUDEOIL",
+        "instrument_type": "FUT",
+        "expiry": "2026-12-18",
+    }
+    quote = {"last_price": 7822.0}
+    response = {"MCX_FO:CRUDEOIL26DECFUT": quote}
+
+    assert find_quote(response, contract) is quote
+
+
+def test_find_quote_rejects_different_expiry_symbol():
+    contract = {
+        "segment": "MCX_FO",
+        "instrument_key": "MCX_FO|576264",
+        "trading_symbol": "CRUDEOIL FUT 18 DEC 26",
+        "underlying_symbol": "CRUDEOIL",
+        "name": "CRUDEOIL",
+        "instrument_type": "FUT",
+        "expiry": "2026-12-18",
+    }
+    response = {"MCX_FO:CRUDEOIL26NOVFUT": {"last_price": 7800.0}}
+
+    assert find_quote(response, contract) is None
