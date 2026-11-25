@@ -93,6 +93,28 @@ def test_failed_message(mock_post):
     telegram = TelegramAlerts(
         bot_token="test-token",
         chat_id="12345",
+        retries=1,
     )
 
     assert telegram.send_message("Test alert") is False
+
+@patch("telegram_alerts.time.sleep")
+@patch("telegram_alerts.requests.post")
+def test_retry_then_success(mock_post, mock_sleep):
+    failed = Mock()
+    failed.side_effect = requests.Timeout("Temporary network error")
+
+    succeeded = Mock()
+    succeeded.json.return_value = {"ok": True}
+    succeeded.raise_for_status.return_value = None
+    mock_post.side_effect = [requests.Timeout("Temporary network error"), succeeded]
+
+    telegram = TelegramAlerts(
+        bot_token="test-token",
+        chat_id="12345",
+        retries=2,
+        retry_delay=0,
+    )
+
+    assert telegram.send_message("Retry test") is True
+    assert mock_post.call_count == 2
