@@ -38,23 +38,29 @@ class SignalNotifier:
             logger.warning("Option contract is missing.")
             return False
 
-        # Save first to prevent duplicate notifications.
-        saved = self.history.save_signal(signal)
-
-        if not saved:
+        # Check for a previously delivered signal. Save it only after Telegram
+        # confirms delivery, so a temporary Telegram failure can be retried.
+        if self.history.has_signal(signal):
             logger.info("Duplicate signal suppressed.")
             return False
 
         success = self.telegram.send_signal(signal)
 
-        if success:
-            logger.info(
-                "Telegram signal sent: %s %s",
-                signal.get("commodity"),
-                signal.get("signal"),
+        if not success:
+            logger.error("Telegram delivery failed; signal remains retryable.")
+            return False
+
+        saved = self.history.save_signal(signal)
+        if not saved:
+            logger.warning(
+                "Telegram delivered, but signal history could not record it."
             )
-        else:
-            logger.error("Telegram delivery failed.")
+
+        logger.info(
+            "Telegram signal delivered: %s %s",
+            signal.get("commodity"),
+            signal.get("signal"),
+        )
 
         return success
 
