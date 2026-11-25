@@ -98,12 +98,10 @@ def test_failed_message(mock_post):
 
     assert telegram.send_message("Test alert") is False
 
+
 @patch("telegram_alerts.time.sleep")
 @patch("telegram_alerts.requests.post")
 def test_retry_then_success(mock_post, mock_sleep):
-    failed = Mock()
-    failed.side_effect = requests.Timeout("Temporary network error")
-
     succeeded = Mock()
     succeeded.json.return_value = {"ok": True}
     succeeded.raise_for_status.return_value = None
