@@ -1,5 +1,7 @@
 import os
 import logging
+import time
+
 import requests
 
 
@@ -9,14 +11,19 @@ logger = logging.getLogger(__name__)
 class TelegramAlerts:
     API_URL = "https://api.telegram.org"
 
-    def __init__(self, bot_token=None, chat_id=None, timeout=15):
+    def __init__(
+        self, bot_token=None, chat_id=None, timeout=15,
+        retries=3, retry_delay=2,
+    ):
         self.bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
         self.chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
         self.timeout = timeout
+        self.retries = max(1, int(retries))
+        self.retry_delay = max(0, float(retry_delay))
 
     def send_message(self, message):
         if not self.bot_token or not self.chat_id:
-            logger.warning("Telegram credentials are not configured.")
+            logger.error("Telegram credentials are not configured.")
             return False
 
         if not isinstance(message, str) or not message.strip():
@@ -24,29 +31,41 @@ class TelegramAlerts:
 
         url = f"{self.API_URL}/bot{self.bot_token}/sendMessage"
 
-        try:
-            response = requests.post(
-                url,
-                json={
-                    "chat_id": self.chat_id,
-                    "text": message,
-                    "disable_web_page_preview": True,
-                },
-                timeout=self.timeout,
-            )
+        for attempt in range(self.retries):
+            try:
+                response = requests.post(
+                    url,
+                    json={
+                        "chat_id": self.chat_id,
+                        "text": message,
+                        "disable_web_page_preview": True,
+                    },
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                result = response.json()
 
-            response.raise_for_status()
-            result = response.json()
+                if result.get("ok") is True:
+                    logger.info("Telegram message delivered.")
+                    return True
 
-            if result.get("ok") is not True:
-                logger.error("Telegram rejected the message.")
-                return False
+                description = result.get("description", "unknown Telegram error")
+                logger.warning(
+                    "Telegram rejected message (attempt %s/%s): %s",
+                    attempt + 1, self.retries, description,
+                )
 
-            return True
+            except (requests.RequestException, ValueError) as exc:
+                logger.warning(
+                    "Telegram delivery attempt %s/%s failed: %s",
+                    attempt + 1, self.retries, type(exc).__name__,
+                )
 
-        except requests.RequestException:
-            logger.exception("Telegram notification failed.")
-            return False
+            if attempt + 1 < self.retries:
+                time.sleep(self.retry_delay * (2 ** attempt)
+
+        logger.error("Telegram delivery failed after %s attempts.", self.retries)
+        return False
 
     def format_signal(self, signal):
         if signal.get("signal") == "NO_TRADE":
@@ -78,6 +97,4 @@ class TelegramAlerts:
         )
 
     def send_signal(self, signal):
-        message = self.format_signal(signal)
-        return self.send_message(message)
-      
+        return self.send_message(self.format_signal(signal))
