@@ -41,6 +41,7 @@ jobs:
 
       - name: Run MCX scanner
         id: scan
+        if: github.event_name != 'pull_request'
         env:
           UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -50,7 +51,7 @@ jobs:
           python main.py 2>&1 | tee mcx-scan.log
 
       - name: Telegram failure/cancellation fallback
-        if: ${{ always() && (failure() || cancelled()) }}
+        if: ${{ github.event_name != 'pull_request' && always() && (failure() || cancelled()) }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
