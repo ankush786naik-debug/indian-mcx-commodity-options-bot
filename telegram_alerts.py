@@ -62,7 +62,7 @@ class TelegramAlerts:
                 )
 
             if attempt + 1 < self.retries:
-                time.sleep(self.retry_delay * (2 ** attempt)
+                time.sleep(self.retry_delay * (2 ** attempt))
 
         logger.error("Telegram delivery failed after %s attempts.", self.retries)
         return False
